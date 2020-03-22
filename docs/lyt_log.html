@@ -1,0 +1,1334 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+
+// Define MPL specific subclasses
+function MPLSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function MPLScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+MPLSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+MPLScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var MPLMethods = {
+  init_slider : function(init_val){
+    if(this.load_json) {
+      this.from_json()
+    } else {
+      this.update_cache();
+    }
+    if (this.dynamic | !this.cached | (this.current_vals === undefined)) {
+      this.update(0)
+    } else {
+      this.set_frame(this.current_vals[0], 0)
+    }
+  },
+  process_msg : function(msg) {
+    var data = msg.content.data;
+    this.frames[this.current] = data;
+    this.update_cache(true);
+    this.update(this.current);
+  }
+}
+// Extend MPL widgets with backend specific methods
+extend(MPLSelectionWidget.prototype, MPLMethods);
+extend(MPLScrubberWidget.prototype, MPLMethods);
+
+window.HoloViews.MPLSelectionWidget = MPLSelectionWidget
+window.HoloViews.MPLScrubberWidget = MPLScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href=".widget-box {
+	min-height: 20px;
+	background-color: #f5f5f5;
+	border: 1px solid #e3e3e3 !important;
+	border-radius: 4px;
+	-webkit-box-shadow: inset 0 1px 1px rgba(0,0,0,.05);
+	box-shadow: inset 0 1px 1px rgba(0,0,0,.05);
+	overflow-x: hidden;
+	overflow-y: hidden;
+}
+
+.scrollable {
+  overflow: scroll;
+}
+
+progress {
+	appearance: none;
+	-moz-appearance: none;
+	-webkit-appearance: none;
+
+	border: none;
+	height: 20px;
+	background-color: whiteSmoke;
+	border-radius: 3px;
+	box-shadow: 0 2px 3px rgba(0,0,0,.5) inset;
+	color: royalblue;
+	position: relative;
+	margin: 0 0 1.5em;
+}
+
+progress[value]::-webkit-progress-bar {
+	background-color: whiteSmoke;
+	border-radius: 3px;
+	box-shadow: 0 2px 3px rgba(0,0,0,.5) inset;
+}
+
+progress[value]::-webkit-progress-value {
+	position: relative;
+
+	background-size: 35px 20px, 100% 100%, 100% 100%;
+	border-radius:3px;
+}
+
+progress.active:not([value])::before {
+	background-position: 10%;
+	animation-name: stripes;
+	animation-duration: 3s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+progress[value]::-moz-progress-bar {
+	background-size: 35px 20px, 100% 100%, 100% 100%;
+	border-radius:3px;
+}
+
+progress:not([value])::-moz-progress-bar {
+	border-radius:3px;
+	background:
+	linear-gradient(-45deg, transparent 33%, rgba(0, 0, 0, 0.2) 33%, rgba(0, 0, 0, 0.2) 66%, transparent 66%) left/2.5em 1.5em;
+
+}
+
+progress.active:not([value])::-moz-progress-bar {
+	background-position: 10%;
+	animation-name: stripes;
+	animation-duration: 3s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+progress.active:not([value])::-webkit-progress-bar {
+	background-position: 10%;
+	animation-name: stripes;
+	animation-duration: 3s;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+}
+
+progress.primary[value]::-webkit-progress-value { background-color: #007bff; }
+progress.primary:not([value])::before { background-color: #007bff; }
+progress.primary:not([value])::-webkit-progress-bar { background-color: #007bff; }
+progress.primary::-moz-progress-bar { background-color: #007bff; }
+
+progress.secondary[value]::-webkit-progress-value { background-color: #6c757d; }
+progress.secondary:not([value])::before { background-color: #6c757d; }
+progress.secondary:not([value])::-webkit-progress-bar { background-color: #6c757d; }
+progress.secondary::-moz-progress-bar { background-color: #6c757d; }
+
+progress.success[value]::-webkit-progress-value { background-color: #28a745; }
+progress.success:not([value])::before { background-color: #28a745; }
+progress.success:not([value])::-webkit-progress-bar { background-color: #28a745; }
+progress.success::-moz-progress-bar { background-color: #28a745; }
+
+progress.danger[value]::-webkit-progress-value { background-color: #dc3545; }
+progress.danger:not([value])::before { background-color: #dc3545; }
+progress.danger:not([value])::-webkit-progress-bar { background-color: #dc3545; }
+progress.danger::-moz-progress-bar { background-color: #dc3545; }
+
+progress.warning[value]::-webkit-progress-value { background-color: #ffc107; }
+progress.warning:not([value])::before { background-color: #ffc107; }
+progress.warning:not([value])::-webkit-progress-bar { background-color: #ffc107; }
+progress.warning::-moz-progress-bar { background-color: #ffc107; }
+
+progress.info[value]::-webkit-progress-value { background-color: #17a2b8; }
+progress.info:not([value])::before { background-color: #17a2b8; }
+progress.info:not([value])::-webkit-progress-bar { background-color: #17a2b8; }
+progress.info::-moz-progress-bar { background-color: #17a2b8; }
+
+progress.light[value]::-webkit-progress-value { background-color: #f8f9fa; }
+progress.light:not([value])::before { background-color: #f8f9fa; }
+progress.light:not([value])::-webkit-progress-bar { background-color: #f8f9fa; }
+progress.light::-moz-progress-bar { background-color: #f8f9fa; }
+
+progress.dark[value]::-webkit-progress-value { background-color: #343a40; }
+progress.dark:not([value])::-webkit-progress-bar { background-color: #343a40; }
+progress.dark:not([value])::before { background-color: #343a40; }
+progress.dark::-moz-progress-bar { background-color: #343a40; }
+
+progress:not([value])::-webkit-progress-bar {
+	border-radius: 3px;
+	background:
+	linear-gradient(-45deg, transparent 33%, rgba(0, 0, 0, 0.2) 33%, rgba(0, 0, 0, 0.2) 66%, transparent 66%) left/2.5em 1.5em;
+}
+progress:not([value])::before {
+	content:" ";
+	position:absolute;
+	height: 20px;
+	top:0;
+	left:0;
+	right:0;
+	bottom:0;
+	border-radius: 3px;
+	background:
+	linear-gradient(-45deg, transparent 33%, rgba(0, 0, 0, 0.2) 33%, rgba(0, 0, 0, 0.2) 66%, transparent 66%) left/2.5em 1.5em;
+}
+
+@keyframes stripes {
+  from {background-position: 0%}
+  to {background-position: 100%}
+}">
+<link rel="stylesheet" href=".codehilite .hll { background-color: #ffffcc }
+.codehilite  { background: #f8f8f8; }
+.codehilite .c { color: #408080; font-style: italic } /* Comment */
+.codehilite .err { border: 1px solid #FF0000 } /* Error */
+.codehilite .k { color: #008000; font-weight: bold } /* Keyword */
+.codehilite .o { color: #666666 } /* Operator */
+.codehilite .ch { color: #408080; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #408080; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #BC7A00 } /* Comment.Preproc */
+.codehilite .cpf { color: #408080; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #408080; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #408080; font-style: italic } /* Comment.Special */
+.codehilite .gd { color: #A00000 } /* Generic.Deleted */
+.codehilite .ge { font-style: italic } /* Generic.Emph */
+.codehilite .gr { color: #FF0000 } /* Generic.Error */
+.codehilite .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #00A000 } /* Generic.Inserted */
+.codehilite .go { color: #888888 } /* Generic.Output */
+.codehilite .gp { color: #000080; font-weight: bold } /* Generic.Prompt */
+.codehilite .gs { font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+.codehilite .gt { color: #0044DD } /* Generic.Traceback */
+.codehilite .kc { color: #008000; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #008000; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #008000; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #008000 } /* Keyword.Pseudo */
+.codehilite .kr { color: #008000; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #B00040 } /* Keyword.Type */
+.codehilite .m { color: #666666 } /* Literal.Number */
+.codehilite .s { color: #BA2121 } /* Literal.String */
+.codehilite .na { color: #7D9029 } /* Name.Attribute */
+.codehilite .nb { color: #008000 } /* Name.Builtin */
+.codehilite .nc { color: #0000FF; font-weight: bold } /* Name.Class */
+.codehilite .no { color: #880000 } /* Name.Constant */
+.codehilite .nd { color: #AA22FF } /* Name.Decorator */
+.codehilite .ni { color: #999999; font-weight: bold } /* Name.Entity */
+.codehilite .ne { color: #D2413A; font-weight: bold } /* Name.Exception */
+.codehilite .nf { color: #0000FF } /* Name.Function */
+.codehilite .nl { color: #A0A000 } /* Name.Label */
+.codehilite .nn { color: #0000FF; font-weight: bold } /* Name.Namespace */
+.codehilite .nt { color: #008000; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #19177C } /* Name.Variable */
+.codehilite .ow { color: #AA22FF; font-weight: bold } /* Operator.Word */
+.codehilite .w { color: #bbbbbb } /* Text.Whitespace */
+.codehilite .mb { color: #666666 } /* Literal.Number.Bin */
+.codehilite .mf { color: #666666 } /* Literal.Number.Float */
+.codehilite .mh { color: #666666 } /* Literal.Number.Hex */
+.codehilite .mi { color: #666666 } /* Literal.Number.Integer */
+.codehilite .mo { color: #666666 } /* Literal.Number.Oct */
+.codehilite .sa { color: #BA2121 } /* Literal.String.Affix */
+.codehilite .sb { color: #BA2121 } /* Literal.String.Backtick */
+.codehilite .sc { color: #BA2121 } /* Literal.String.Char */
+.codehilite .dl { color: #BA2121 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #BA2121; font-style: italic } /* Literal.String.Doc */
+.codehilite .s2 { color: #BA2121 } /* Literal.String.Double */
+.codehilite .se { color: #BB6622; font-weight: bold } /* Literal.String.Escape */
+.codehilite .sh { color: #BA2121 } /* Literal.String.Heredoc */
+.codehilite .si { color: #BB6688; font-weight: bold } /* Literal.String.Interpol */
+.codehilite .sx { color: #008000 } /* Literal.String.Other */
+.codehilite .sr { color: #BB6688 } /* Literal.String.Regex */
+.codehilite .s1 { color: #BA2121 } /* Literal.String.Single */
+.codehilite .ss { color: #19177C } /* Literal.String.Symbol */
+.codehilite .bp { color: #008000 } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #0000FF } /* Name.Function.Magic */
+.codehilite .vc { color: #19177C } /* Name.Variable.Class */
+.codehilite .vg { color: #19177C } /* Name.Variable.Global */
+.codehilite .vi { color: #19177C } /* Name.Variable.Instance */
+.codehilite .vm { color: #19177C } /* Name.Variable.Magic */
+.codehilite .il { color: #666666 } /* Literal.Number.Integer.Long */
+
+.markdown h1 { margin-block-start: 0.34em }
+.markdown h2 { margin-block-start: 0.42em }
+.markdown h3 { margin-block-start: 0.5em }
+.markdown h4 { margin-block-start: 0.67em }
+.markdown h5 { margin-block-start: 0.84em }
+.markdown h6 { margin-block-start: 1.17em }
+.markdown ul { padding-inline-start: 2em }
+.markdown ol { padding-inline-start: 2em }
+.markdown strong { font-weight: 600 }
+.markdown a { color: -webkit-link }
+.markdown a { color: -moz-hyperlinkText }
+">
+<link rel="stylesheet" href=".json-formatter-row {
+  font-family: monospace;
+}
+.json-formatter-row,
+.json-formatter-row a,
+.json-formatter-row a:hover {
+  color: black;
+  text-decoration: none;
+}
+.json-formatter-row .json-formatter-row {
+  margin-left: 1rem;
+}
+.json-formatter-row .json-formatter-children.json-formatter-empty {
+  opacity: 0.5;
+  margin-left: 1rem;
+}
+.json-formatter-row .json-formatter-children.json-formatter-empty:after {
+  display: none;
+}
+.json-formatter-row .json-formatter-children.json-formatter-empty.json-formatter-object:after {
+  content: "No properties";
+}
+.json-formatter-row .json-formatter-children.json-formatter-empty.json-formatter-array:after {
+  content: "[]";
+}
+.json-formatter-row .json-formatter-string,
+.json-formatter-row .json-formatter-stringifiable {
+  color: green;
+  white-space: pre;
+  word-wrap: break-word;
+}
+.json-formatter-row .json-formatter-number {
+  color: blue;
+}
+.json-formatter-row .json-formatter-boolean {
+  color: red;
+}
+.json-formatter-row .json-formatter-null {
+  color: #855A00;
+}
+.json-formatter-row .json-formatter-undefined {
+  color: #ca0b69;
+}
+.json-formatter-row .json-formatter-function {
+  color: #FF20ED;
+}
+.json-formatter-row .json-formatter-date {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+.json-formatter-row .json-formatter-url {
+  text-decoration: underline;
+  color: blue;
+  cursor: pointer;
+}
+.json-formatter-row .json-formatter-bracket {
+  color: blue;
+}
+.json-formatter-row .json-formatter-key {
+  color: #00008B;
+  padding-right: 0.2rem;
+}
+.json-formatter-row .json-formatter-toggler-link {
+  cursor: pointer;
+}
+.json-formatter-row .json-formatter-toggler {
+  line-height: 1.2rem;
+  font-size: 0.7rem;
+  vertical-align: middle;
+  opacity: 0.6;
+  cursor: pointer;
+  padding-right: 0.2rem;
+}
+.json-formatter-row .json-formatter-toggler:after {
+  display: inline-block;
+  transition: transform 100ms ease-in;
+  content: "\25BA";
+}
+.json-formatter-row > a > .json-formatter-preview-text {
+  opacity: 0;
+  transition: opacity 0.15s ease-in;
+  font-style: italic;
+}
+.json-formatter-row:hover > a > .json-formatter-preview-text {
+  opacity: 0.6;
+}
+.json-formatter-row.json-formatter-open > .json-formatter-toggler-link .json-formatter-toggler:after {
+  transform: rotate(90deg);
+}
+.json-formatter-row.json-formatter-open > .json-formatter-children:after {
+  display: inline-block;
+}
+.json-formatter-row.json-formatter-open > a > .json-formatter-preview-text {
+  display: none;
+}
+.json-formatter-row.json-formatter-open.json-formatter-empty:after {
+  display: block;
+}
+.json-formatter-dark.json-formatter-row {
+  font-family: monospace;
+}
+.json-formatter-dark.json-formatter-row,
+.json-formatter-dark.json-formatter-row a,
+.json-formatter-dark.json-formatter-row a:hover {
+  color: white;
+  text-decoration: none;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-row {
+  margin-left: 1rem;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-children.json-formatter-empty {
+  opacity: 0.5;
+  margin-left: 1rem;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-children.json-formatter-empty:after {
+  display: none;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-children.json-formatter-empty.json-formatter-object:after {
+  content: "No properties";
+}
+.json-formatter-dark.json-formatter-row .json-formatter-children.json-formatter-empty.json-formatter-array:after {
+  content: "[]";
+}
+.json-formatter-dark.json-formatter-row .json-formatter-string,
+.json-formatter-dark.json-formatter-row .json-formatter-stringifiable {
+  color: #31F031;
+  white-space: pre;
+  word-wrap: break-word;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-number {
+  color: #66C2FF;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-boolean {
+  color: #EC4242;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-null {
+  color: #EEC97D;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-undefined {
+  color: #ef8fbe;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-function {
+  color: #FD48CB;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-date {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+.json-formatter-dark.json-formatter-row .json-formatter-url {
+  text-decoration: underline;
+  color: #027BFF;
+  cursor: pointer;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-bracket {
+  color: #9494FF;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-key {
+  color: #23A0DB;
+  padding-right: 0.2rem;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-toggler-link {
+  cursor: pointer;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-toggler {
+  line-height: 1.2rem;
+  font-size: 0.7rem;
+  vertical-align: middle;
+  opacity: 0.6;
+  cursor: pointer;
+  padding-right: 0.2rem;
+}
+.json-formatter-dark.json-formatter-row .json-formatter-toggler:after {
+  display: inline-block;
+  transition: transform 100ms ease-in;
+  content: "\25BA";
+}
+.json-formatter-dark.json-formatter-row > a > .json-formatter-preview-text {
+  opacity: 0;
+  transition: opacity 0.15s ease-in;
+  font-style: italic;
+}
+.json-formatter-dark.json-formatter-row:hover > a > .json-formatter-preview-text {
+  opacity: 0.6;
+}
+.json-formatter-dark.json-formatter-row.json-formatter-open > .json-formatter-toggler-link .json-formatter-toggler:after {
+  transform: rotate(90deg);
+}
+.json-formatter-dark.json-formatter-row.json-formatter-open > .json-formatter-children:after {
+  display: inline-block;
+}
+.json-formatter-dark.json-formatter-row.json-formatter-open > a > .json-formatter-preview-text {
+  display: none;
+}
+.json-formatter-dark.json-formatter-row.json-formatter-open.json-formatter-empty:after {
+  display: block;
+}
+">
+<link rel="stylesheet" href="table.panel-df {
+    margin-left: auto;
+    margin-right: auto;
+    border: none;
+    border-collapse: collapse;
+    border-spacing: 0;
+    color: black;
+    font-size: 12px;
+    table-layout: fixed;
+    width: 100%;
+}
+
+.panel-df tr, th, td {
+    text-align: right;
+    vertical-align: middle;
+    padding: 0.5em 0.5em !important;
+    line-height: normal;
+    white-space: normal;
+    max-width: none;
+    border: none;
+}
+
+.panel-df tbody {
+    display: table-row-group;
+    vertical-align: middle;
+    border-color: inherit;
+}
+
+.panel-df tbody tr:nth-child(odd) {
+    background: #f5f5f5;
+}
+
+.panel-df thead {
+    border-bottom: 1px solid black;
+    vertical-align: bottom;
+}
+
+.panel-df tr:hover {
+    background: lightblue !important;
+    cursor: pointer;
+}
+">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+
+div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="102f6cec-6cca-4883-bc91-a7bdc6437eec" data-root-id="36401"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"7aa52f20-02f5-497d-92dc-99ecf0bea04b":{"roots":{"references":[{"attributes":{"children":[{"id":"36400","type":"ToolbarBox"},{"id":"36398","type":"GridBox"}]},"id":"36401","type":"Column"},{"attributes":{"label":{"value":"France"},"renderers":[{"id":"35943","type":"GlyphRenderer"}]},"id":"35953","type":"LegendItem"},{"attributes":{},"id":"36018","type":"Selection"},{"attributes":{"data_source":{"id":"36069","type":"ColumnDataSource"},"glyph":{"id":"36072","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"36074","type":"Line"},"nonselection_glyph":{"id":"36073","type":"Line"},"selection_glyph":null,"view":{"id":"36076","type":"CDSView"}},"id":"36075","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.2,"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36022","type":"Line"},{"attributes":{},"id":"35526","type":"Selection"},{"attributes":{"label":{"value":"Iran"},"renderers":[{"id":"35979","type":"GlyphRenderer"}]},"id":"35993","type":"LegendItem"},{"attributes":{},"id":"35906","type":"PanTool"},{"attributes":{"line_alpha":0.2,"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35578","type":"Line"},{"attributes":{},"id":"35601","type":"Selection"},{"attributes":{"callback":null,"data":{"Country":["Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany"],"Date":{"__ndarray__":"AACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[13]},"Date_dt_strings":["2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[2,2,3,3,7,9,11,17,24,28,44,67,84],"days_pat_100":{"__ndarray__":"AAAAAAAAIEAAAAAAAAAiQAAAAAAAACRAAAAAAAAAJkAAAAAAAAAoQAAAAAAAACpAAAAAAAAALEAAAAAAAAAuQAAAAAAAADBAAAAAAAAAMUAAAAAAAAAyQAAAAAAAADNAAAAAAAAANEA=","dtype":"float64","shape":[13]}},"selected":{"id":"35955","type":"Selection"},"selection_policy":{"id":"35992","type":"UnionRenderers"}},"id":"35954","type":"ColumnDataSource"},{"attributes":{"label":{"value":"US"},"renderers":[{"id":"35635","type":"GlyphRenderer"}]},"id":"35659","type":"LegendItem"},{"attributes":{"source":{"id":"35548","type":"ColumnDataSource"}},"id":"35555","type":"CDSView"},{"attributes":{"data_source":{"id":"35548","type":"ColumnDataSource"},"glyph":{"id":"35551","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35553","type":"Line"},"nonselection_glyph":{"id":"35552","type":"Line"},"selection_glyph":null,"view":{"id":"35555","type":"CDSView"}},"id":"35554","type":"GlyphRenderer"},{"attributes":{"data_source":{"id":"35937","type":"ColumnDataSource"},"glyph":{"id":"35940","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35942","type":"Line"},"nonselection_glyph":{"id":"35941","type":"Line"},"selection_glyph":null,"view":{"id":"35944","type":"CDSView"}},"id":"35943","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.1,"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35508","type":"Line"},{"attributes":{},"id":"36099","type":"Selection"},{"attributes":{"align":null,"below":[{"id":"35426","type":"LinearAxis"}],"center":[{"id":"35430","type":"Grid"},{"id":"35435","type":"Grid"},{"id":"35466","type":"Legend"}],"left":[{"id":"35431","type":"LogAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":480,"plot_width":640,"renderers":[{"id":"35458","type":"GlyphRenderer"},{"id":"35474","type":"GlyphRenderer"},{"id":"35491","type":"GlyphRenderer"},{"id":"35510","type":"GlyphRenderer"},{"id":"35531","type":"GlyphRenderer"},{"id":"35554","type":"GlyphRenderer"},{"id":"35579","type":"GlyphRenderer"},{"id":"35606","type":"GlyphRenderer"},{"id":"35635","type":"GlyphRenderer"},{"id":"35666","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"35418","type":"Title"},"toolbar":{"id":"35441","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"35405","type":"Range1d"},"x_scale":{"id":"35422","type":"LinearScale"},"y_range":{"id":"35406","type":"Range1d"},"y_scale":{"id":"35424","type":"LogScale"}},"id":"35417","subtype":"Figure","type":"Plot"},{"attributes":{"label":{"value":"Spain"},"renderers":[{"id":"35579","type":"GlyphRenderer"}]},"id":"35599","type":"LegendItem"},{"attributes":{"source":{"id":"36069","type":"ColumnDataSource"}},"id":"36076","type":"CDSView"},{"attributes":{"data_source":{"id":"35629","type":"ColumnDataSource"},"glyph":{"id":"35632","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35634","type":"Line"},"nonselection_glyph":{"id":"35633","type":"Line"},"selection_glyph":null,"view":{"id":"35636","type":"CDSView"}},"id":"35635","type":"GlyphRenderer"},{"attributes":{"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35507","type":"Line"},{"attributes":{},"id":"35571","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"35573","type":"ColumnDataSource"},"glyph":{"id":"35576","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35578","type":"Line"},"nonselection_glyph":{"id":"35577","type":"Line"},"selection_glyph":null,"view":{"id":"35580","type":"CDSView"}},"id":"35579","type":"GlyphRenderer"},{"attributes":{},"id":"35448","type":"BasicTickFormatter"},{"attributes":{"ticker":null},"id":"35919","type":"LogTickFormatter"},{"attributes":{},"id":"35549","type":"Selection"},{"attributes":{"data_source":{"id":"35994","type":"ColumnDataSource"},"glyph":{"id":"35997","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35999","type":"Line"},"nonselection_glyph":{"id":"35998","type":"Line"},"selection_glyph":null,"view":{"id":"36001","type":"CDSView"}},"id":"36000","type":"GlyphRenderer"},{"attributes":{"label":{"value":"Switzerland"},"renderers":[{"id":"36075","type":"GlyphRenderer"}]},"id":"36097","type":"LegendItem"},{"attributes":{},"id":"35952","type":"UnionRenderers"},{"attributes":{},"id":"35992","type":"UnionRenderers"},{"attributes":{"label":{"value":"Italy"},"renderers":[{"id":"36000","type":"GlyphRenderer"}]},"id":"36016","type":"LegendItem"},{"attributes":{"ticker":null},"id":"35450","type":"LogTickFormatter"},{"attributes":{},"id":"36067","type":"UnionRenderers"},{"attributes":{"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35976","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36021","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36073","type":"Line"},{"attributes":{"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36072","type":"Line"},{"attributes":{"data_source":{"id":"35600","type":"ColumnDataSource"},"glyph":{"id":"35603","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35605","type":"Line"},"nonselection_glyph":{"id":"35604","type":"Line"},"selection_glyph":null,"view":{"id":"35607","type":"CDSView"}},"id":"35606","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.1,"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35529","type":"Line"},{"attributes":{},"id":"35523","type":"UnionRenderers"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"35432","type":"LogTicker"}},"id":"35435","type":"Grid"},{"attributes":{"data_source":{"id":"35973","type":"ColumnDataSource"},"glyph":{"id":"35976","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35978","type":"Line"},"nonselection_glyph":{"id":"35977","type":"Line"},"selection_glyph":null,"view":{"id":"35980","type":"CDSView"}},"id":"35979","type":"GlyphRenderer"},{"attributes":{},"id":"35893","type":"LogScale"},{"attributes":{"line_alpha":0.1,"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35552","type":"Line"},{"attributes":{},"id":"36040","type":"UnionRenderers"},{"attributes":{},"id":"35427","type":"BasicTicker"},{"attributes":{"source":{"id":"35973","type":"ColumnDataSource"}},"id":"35980","type":"CDSView"},{"attributes":{"line_alpha":0.2,"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36074","type":"Line"},{"attributes":{},"id":"35658","type":"UnionRenderers"},{"attributes":{"label":{"value":"China"},"renderers":[{"id":"35927","type":"GlyphRenderer"}]},"id":"35936","type":"LegendItem"},{"attributes":{},"id":"36043","type":"Selection"},{"attributes":{},"id":"36070","type":"Selection"},{"attributes":{"axis_label":"Days since Patient 100","bounds":"auto","formatter":{"id":"35448","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"35427","type":"BasicTicker"}},"id":"35426","type":"LinearAxis"},{"attributes":{"axis_label":"Deaths","bounds":"auto","formatter":{"id":"35919","type":"LogTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"35901","type":"LogTicker"}},"id":"35900","type":"LogAxis"},{"attributes":{"label":{"value":"Korea, South"},"renderers":[{"id":"35554","type":"GlyphRenderer"}]},"id":"35572","type":"LegendItem"},{"attributes":{"callback":null,"data":{"Confirmed":[155,229,322,453,655,888,1128,1694,2036,2502,3089,3858,4636,5883,7375,9172,10149,12462,12462,17660,21157,24747,27980,31506,35713,41035,47021,53578],"Country":["Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy"],"Date":{"__ndarray__":"AABAf/UGd0IAAADlRwd3QgAAwEqaB3dCAACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[28]},"Date_dt_strings":["2020-02-23 00:00:00","2020-02-24 00:00:00","2020-02-25 00:00:00","2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0A=","dtype":"float64","shape":[28]}},"selected":{"id":"35526","type":"Selection"},"selection_policy":{"id":"35571","type":"UnionRenderers"}},"id":"35525","type":"ColumnDataSource"},{"attributes":{"data_source":{"id":"36042","type":"ColumnDataSource"},"glyph":{"id":"36045","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"36047","type":"Line"},"nonselection_glyph":{"id":"36046","type":"Line"},"selection_glyph":null,"view":{"id":"36049","type":"CDSView"}},"id":"36048","type":"GlyphRenderer"},{"attributes":{"source":{"id":"35994","type":"ColumnDataSource"}},"id":"36001","type":"CDSView"},{"attributes":{"line_alpha":0.2,"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36047","type":"Line"},{"attributes":{},"id":"35483","type":"UnionRenderers"},{"attributes":{"callback":null,"end":4825.0,"reset_end":4825.0,"reset_start":1.0,"start":1.0,"tags":[[["Deaths","Deaths",null]]]},"id":"35875","type":"Range1d"},{"attributes":{"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35551","type":"Line"},{"attributes":{"callback":null,"data":{"Confirmed":[165,222,259,400,500,673,1073,1695,2277,2277,5232,6391,7798,9942,11748,13910,17963,20410,25374],"Country":["Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain"],"Date":{"__ndarray__":"AAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[19]},"Date_dt_strings":["2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAA8D8AAAAAAAAAQAAAAAAAAAhAAAAAAAAAEEAAAAAAAAAUQAAAAAAAABhAAAAAAAAAHEAAAAAAAAAgQAAAAAAAACJAAAAAAAAAJEAAAAAAAAAmQAAAAAAAAChAAAAAAAAAKkAAAAAAAAAsQAAAAAAAAC5AAAAAAAAAMEAAAAAAAAAxQAAAAAAAADJAAAAAAAAAM0A=","dtype":"float64","shape":[19]}},"selected":{"id":"35574","type":"Selection"},"selection_policy":{"id":"35627","type":"UnionRenderers"}},"id":"35573","type":"ColumnDataSource"},{"attributes":{"label":{"value":"Spain"},"renderers":[{"id":"36048","type":"GlyphRenderer"}]},"id":"36068","type":"LegendItem"},{"attributes":{},"id":"35422","type":"LinearScale"},{"attributes":{"source":{"id":"35525","type":"ColumnDataSource"}},"id":"35532","type":"CDSView"},{"attributes":{"line_alpha":0.2,"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35978","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35998","type":"Line"},{"attributes":{},"id":"35424","type":"LogScale"},{"attributes":{"grid_line_color":null,"ticker":{"id":"35896","type":"BasicTicker"}},"id":"35899","type":"Grid"},{"attributes":{"source":{"id":"35504","type":"ColumnDataSource"}},"id":"35511","type":"CDSView"},{"attributes":{"line_alpha":0.1,"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35977","type":"Line"},{"attributes":{"grid_line_color":null,"ticker":{"id":"35427","type":"BasicTicker"}},"id":"35430","type":"Grid"},{"attributes":{"label":{"value":"Iran"},"renderers":[{"id":"35510","type":"GlyphRenderer"}]},"id":"35524","type":"LegendItem"},{"attributes":{"callback":null,"data":{"Confirmed":[548,643,920,1406,2075,2877,5509,6087,8141,9802,11891,16630,19716,23707,27440,30587,34110,36814,39829,42354,44386,44759,59895,66358,68413,70513,72434,74211,74619],"Country":["China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China"],"Date":{"__ndarray__":"AABAx6j8dkIAAAAt+/x2QgAAwJJN/XZCAACA+J/9dkIAAEBe8v12QgAAAMRE/nZCAADAKZf+dkIAAICP6f52QgAAQPU7/3ZCAAAAW47/dkIAAMDA4P92QgAAgCYzAHdCAABAjIUAd0IAAADy1wB3QgAAwFcqAXdCAACAvXwBd0IAAEAjzwF3QgAAAIkhAndCAADA7nMCd0IAAIBUxgJ3QgAAQLoYA3dCAAAAIGsDd0IAAMCFvQN3QgAAgOsPBHdCAABAUWIEd0IAAAC3tAR3QgAAwBwHBXdCAACAglkFd0IAAEDoqwV3Qg==","dtype":"float64","shape":[29]},"Date_dt_strings":["2020-01-22 00:00:00","2020-01-23 00:00:00","2020-01-24 00:00:00","2020-01-25 00:00:00","2020-01-26 00:00:00","2020-01-27 00:00:00","2020-01-28 00:00:00","2020-01-29 00:00:00","2020-01-30 00:00:00","2020-01-31 00:00:00","2020-02-01 00:00:00","2020-02-02 00:00:00","2020-02-03 00:00:00","2020-02-04 00:00:00","2020-02-05 00:00:00","2020-02-06 00:00:00","2020-02-07 00:00:00","2020-02-08 00:00:00","2020-02-09 00:00:00","2020-02-10 00:00:00","2020-02-11 00:00:00","2020-02-12 00:00:00","2020-02-13 00:00:00","2020-02-14 00:00:00","2020-02-15 00:00:00","2020-02-16 00:00:00","2020-02-17 00:00:00","2020-02-18 00:00:00","2020-02-19 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0AAAAAAAAA8QA==","dtype":"float64","shape":[29]}},"selected":{"id":"35453","type":"Selection"},"selection_policy":{"id":"35483","type":"UnionRenderers"}},"id":"35452","type":"ColumnDataSource"},{"attributes":{"source":{"id":"36017","type":"ColumnDataSource"}},"id":"36024","type":"CDSView"},{"attributes":{"num_minor_ticks":10},"id":"35432","type":"LogTicker"},{"attributes":{"callback":null,"data":{"Country":["US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US"],"Date":{"__ndarray__":"AAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[19]},"Date_dt_strings":["2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[7,11,12,14,17,21,22,28,36,40,47,54,63,85,108,118,200,244,307],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkA=","dtype":"float64","shape":[19]}},"selected":{"id":"36099","type":"Selection"},"selection_policy":{"id":"36160","type":"UnionRenderers"}},"id":"36098","type":"ColumnDataSource"},{"attributes":{"callback":null,"data":{"Country":["United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom"],"Date":{"__ndarray__":"AACA3n8Kd0IAAEBE0gp3QgAAAKokC3dCAADAD3cLd0IAAIB1yQt3QgAAQNsbDHdCAAAAQW4Md0IAAMCmwAx3QgAAgAwTDXdCAABAcmUNd0IAAADYtw13QgAAwD0KDndCAACAo1wOd0IAAEAJrw53QgAAAG8BD3dCAADA1FMPd0IAAIA6pg93Qg==","dtype":"float64","shape":[17]},"Date_dt_strings":["2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[1,2,2,3,4,6,8,8,8,21,21,56,56,72,138,178,234],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQA==","dtype":"float64","shape":[17]}},"selected":{"id":"36130","type":"Selection"},"selection_policy":{"id":"36187","type":"UnionRenderers"}},"id":"36129","type":"ColumnDataSource"},{"attributes":{},"id":"35453","type":"Selection"},{"attributes":{"axis_label":"Confirmed Cases","bounds":"auto","formatter":{"id":"35450","type":"LogTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"35432","type":"LogTicker"}},"id":"35431","type":"LogAxis"},{"attributes":{"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36045","type":"Line"},{"attributes":{},"id":"35546","type":"UnionRenderers"},{"attributes":{},"id":"36096","type":"UnionRenderers"},{"attributes":{"label":{"value":"France"},"renderers":[{"id":"35474","type":"GlyphRenderer"}]},"id":"35484","type":"LegendItem"},{"attributes":{"line_alpha":0.1,"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35604","type":"Line"},{"attributes":{"data_source":{"id":"35504","type":"ColumnDataSource"},"glyph":{"id":"35507","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35509","type":"Line"},"nonselection_glyph":{"id":"35508","type":"Line"},"selection_glyph":null,"view":{"id":"35511","type":"CDSView"}},"id":"35510","type":"GlyphRenderer"},{"attributes":{},"id":"35891","type":"LinearScale"},{"attributes":{"line_alpha":0.2,"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35553","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35530","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35634","type":"Line"},{"attributes":{"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35528","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36046","type":"Line"},{"attributes":{"source":{"id":"36042","type":"ColumnDataSource"}},"id":"36049","type":"CDSView"},{"attributes":{"data_source":{"id":"36017","type":"ColumnDataSource"},"glyph":{"id":"36020","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"36022","type":"Line"},"nonselection_glyph":{"id":"36021","type":"Line"},"selection_glyph":null,"view":{"id":"36024","type":"CDSView"}},"id":"36023","type":"GlyphRenderer"},{"attributes":{"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35603","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#6d904f","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35509","type":"Line"},{"attributes":{"line_color":"#17becf","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36020","type":"Line"},{"attributes":{},"id":"35905","type":"SaveTool"},{"attributes":{"line_alpha":0.1,"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35577","type":"Line"},{"attributes":{"label":{"value":"Germany"},"renderers":[{"id":"35960","type":"GlyphRenderer"}]},"id":"35972","type":"LegendItem"},{"attributes":{"line_alpha":0.2,"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35999","type":"Line"},{"attributes":{"line_color":"#9467bd","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35576","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#d62728","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35605","type":"Line"},{"attributes":{"data_source":{"id":"35525","type":"ColumnDataSource"},"glyph":{"id":"35528","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35530","type":"Line"},"nonselection_glyph":{"id":"35529","type":"Line"},"selection_glyph":null,"view":{"id":"35532","type":"CDSView"}},"id":"35531","type":"GlyphRenderer"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"35901","type":"LogTicker"}},"id":"35904","type":"Grid"},{"attributes":{"num_minor_ticks":10},"id":"35901","type":"LogTicker"},{"attributes":{"axis_label":"Days since Patient 100","bounds":"auto","formatter":{"id":"35917","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"35896","type":"BasicTicker"}},"id":"35895","type":"LinearAxis"},{"attributes":{"callback":null,"end":28.0,"reset_end":28.0,"reset_start":0.0,"tags":[[["days_pat_100","Days since Patient 100",null]]]},"id":"35405","type":"Range1d"},{"attributes":{},"id":"36015","type":"UnionRenderers"},{"attributes":{},"id":"35896","type":"BasicTicker"},{"attributes":{"line_color":"#8b8b8b","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35997","type":"Line"},{"attributes":{},"id":"35974","type":"Selection"},{"attributes":{},"id":"35917","type":"BasicTickFormatter"},{"attributes":{"label":{"value":"Italy"},"renderers":[{"id":"35531","type":"GlyphRenderer"}]},"id":"35547","type":"LegendItem"},{"attributes":{},"id":"35630","type":"Selection"},{"attributes":{"source":{"id":"35629","type":"ColumnDataSource"}},"id":"35636","type":"CDSView"},{"attributes":{"callback":null,"formatters":{"Date":"datetime"},"renderers":[{"id":"35458","type":"GlyphRenderer"},{"id":"35474","type":"GlyphRenderer"},{"id":"35491","type":"GlyphRenderer"},{"id":"35510","type":"GlyphRenderer"},{"id":"35531","type":"GlyphRenderer"},{"id":"35554","type":"GlyphRenderer"},{"id":"35579","type":"GlyphRenderer"},{"id":"35606","type":"GlyphRenderer"},{"id":"35635","type":"GlyphRenderer"},{"id":"35666","type":"GlyphRenderer"}],"tooltips":[["","@Country"],["Cases","@Confirmed"],["Days","@days_pat_100"],["Date","@Date{%F}"]]},"id":"35407","type":"HoverTool"},{"attributes":{"source":{"id":"35573","type":"ColumnDataSource"}},"id":"35580","type":"CDSView"},{"attributes":{},"id":"35661","type":"Selection"},{"attributes":{"line_alpha":0.1,"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35664","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35926","type":"Line"},{"attributes":{"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35471","type":"Line"},{"attributes":{"callback":null,"data":{"Confirmed":[104,204,433,602,833,977,1261,1766,2337,3150,3736,4335,5186,5621,6088,6593,7041,7314,7478,7513,7755,7869,7979,8086,8162,8236,8320,8413,8565],"Country":["Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South"],"Date":{"__ndarray__":"AAAATv4Fd0IAAMCzUAZ3QgAAgBmjBndCAABAf/UGd0IAAADlRwd3QgAAwEqaB3dCAACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93Qg==","dtype":"float64","shape":[29]},"Date_dt_strings":["2020-02-20 00:00:00","2020-02-21 00:00:00","2020-02-22 00:00:00","2020-02-23 00:00:00","2020-02-24 00:00:00","2020-02-25 00:00:00","2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0AAAAAAAAA8QA==","dtype":"float64","shape":[29]}},"selected":{"id":"35549","type":"Selection"},"selection_policy":{"id":"35598","type":"UnionRenderers"}},"id":"35548","type":"ColumnDataSource"},{"attributes":{"callback":null,"data":{"Country":["China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China","China"],"Date":{"__ndarray__":"AABAx6j8dkIAAAAt+/x2QgAAwJJN/XZCAACA+J/9dkIAAEBe8v12QgAAAMRE/nZCAADAKZf+dkIAAICP6f52QgAAQPU7/3ZCAAAAW47/dkIAAMDA4P92QgAAgCYzAHdCAABAjIUAd0IAAADy1wB3QgAAwFcqAXdCAACAvXwBd0IAAEAjzwF3QgAAAIkhAndCAADA7nMCd0IAAIBUxgJ3QgAAQLoYA3dCAAAAIGsDd0IAAMCFvQN3QgAAgOsPBHdCAABAUWIEd0IAAAC3tAR3QgAAwBwHBXdCAACAglkFd0IAAEDoqwV3Qg==","dtype":"float64","shape":[29]},"Date_dt_strings":["2020-01-22 00:00:00","2020-01-23 00:00:00","2020-01-24 00:00:00","2020-01-25 00:00:00","2020-01-26 00:00:00","2020-01-27 00:00:00","2020-01-28 00:00:00","2020-01-29 00:00:00","2020-01-30 00:00:00","2020-01-31 00:00:00","2020-02-01 00:00:00","2020-02-02 00:00:00","2020-02-03 00:00:00","2020-02-04 00:00:00","2020-02-05 00:00:00","2020-02-06 00:00:00","2020-02-07 00:00:00","2020-02-08 00:00:00","2020-02-09 00:00:00","2020-02-10 00:00:00","2020-02-11 00:00:00","2020-02-12 00:00:00","2020-02-13 00:00:00","2020-02-14 00:00:00","2020-02-15 00:00:00","2020-02-16 00:00:00","2020-02-17 00:00:00","2020-02-18 00:00:00","2020-02-19 00:00:00"],"Deaths":[17,18,26,42,56,82,131,133,171,213,259,361,425,491,563,633,718,805,905,1012,1112,1117,1369,1521,1663,1766,1864,2003,2116],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0AAAAAAAAA8QA==","dtype":"float64","shape":[29]}},"selected":{"id":"35922","type":"Selection"},"selection_policy":{"id":"35952","type":"UnionRenderers"}},"id":"35921","type":"ColumnDataSource"},{"attributes":{"click_policy":"mute","items":[{"id":"35467","type":"LegendItem"},{"id":"35484","type":"LegendItem"},{"id":"35503","type":"LegendItem"},{"id":"35524","type":"LegendItem"},{"id":"35547","type":"LegendItem"},{"id":"35572","type":"LegendItem"},{"id":"35599","type":"LegendItem"},{"id":"35628","type":"LegendItem"},{"id":"35659","type":"LegendItem"},{"id":"35692","type":"LegendItem"}],"location":"bottom_right"},"id":"35466","type":"Legend"},{"attributes":{"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35632","type":"Line"},{"attributes":{"label":{"value":"United Kingdom"},"renderers":[{"id":"35666","type":"GlyphRenderer"}]},"id":"35692","type":"LegendItem"},{"attributes":{"callback":null,"data":{"Confirmed":[139,245,388,593,978,1501,2336,2922,3513,4747,5823,6566,7161,8042,9000,10075,11364,12729,13938,14991,16169,17361,18407,19644,20610],"Country":["Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran"],"Date":{"__ndarray__":"AACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[25]},"Date_dt_strings":["2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEA=","dtype":"float64","shape":[25]}},"selected":{"id":"35505","type":"Selection"},"selection_policy":{"id":"35546","type":"UnionRenderers"}},"id":"35504","type":"ColumnDataSource"},{"attributes":{},"id":"35438","type":"WheelZoomTool"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"35407","type":"HoverTool"},{"id":"35436","type":"SaveTool"},{"id":"35437","type":"PanTool"},{"id":"35438","type":"WheelZoomTool"},{"id":"35439","type":"BoxZoomTool"},{"id":"35440","type":"ResetTool"}]},"id":"35441","type":"Toolbar"},{"attributes":{"line_alpha":0.1,"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35472","type":"Line"},{"attributes":{"label":{"value":"United Kingdom"},"renderers":[{"id":"36135","type":"GlyphRenderer"}]},"id":"36161","type":"LegendItem"},{"attributes":{"data_source":{"id":"35485","type":"ColumnDataSource"},"glyph":{"id":"35488","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35490","type":"Line"},"nonselection_glyph":{"id":"35489","type":"Line"},"selection_glyph":null,"view":{"id":"35492","type":"CDSView"}},"id":"35491","type":"GlyphRenderer"},{"attributes":{"data_source":{"id":"35954","type":"ColumnDataSource"},"glyph":{"id":"35957","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35959","type":"Line"},"nonselection_glyph":{"id":"35958","type":"Line"},"selection_glyph":null,"view":{"id":"35961","type":"CDSView"}},"id":"35960","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.1,"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36133","type":"Line"},{"attributes":{"overlay":{"id":"35934","type":"BoxAnnotation"}},"id":"35908","type":"BoxZoomTool"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"35465","type":"BoxAnnotation"},{"attributes":{"data_source":{"id":"35452","type":"ColumnDataSource"},"glyph":{"id":"35455","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35457","type":"Line"},"nonselection_glyph":{"id":"35456","type":"Line"},"selection_glyph":null,"view":{"id":"35459","type":"CDSView"}},"id":"35458","type":"GlyphRenderer"},{"attributes":{"callback":null,"data":{"Country":["Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy","Italy"],"Date":{"__ndarray__":"AABAf/UGd0IAAADlRwd3QgAAwEqaB3dCAACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[28]},"Date_dt_strings":["2020-02-23 00:00:00","2020-02-24 00:00:00","2020-02-25 00:00:00","2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[3,7,10,12,17,21,29,34,52,79,107,148,197,233,366,463,631,827,827,1266,1441,1809,2158,2503,2978,3405,4032,4825],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0A=","dtype":"float64","shape":[28]}},"selected":{"id":"35995","type":"Selection"},"selection_policy":{"id":"36040","type":"UnionRenderers"}},"id":"35994","type":"ColumnDataSource"},{"attributes":{},"id":"35995","type":"Selection"},{"attributes":{"toolbar":{"id":"36399","type":"ProxyToolbar"},"toolbar_location":"above"},"id":"36400","type":"ToolbarBox"},{"attributes":{"click_policy":"mute","items":[{"id":"35936","type":"LegendItem"},{"id":"35953","type":"LegendItem"},{"id":"35972","type":"LegendItem"},{"id":"35993","type":"LegendItem"},{"id":"36016","type":"LegendItem"},{"id":"36041","type":"LegendItem"},{"id":"36068","type":"LegendItem"},{"id":"36097","type":"LegendItem"},{"id":"36128","type":"LegendItem"},{"id":"36161","type":"LegendItem"}],"location":"bottom_right"},"id":"35935","type":"Legend"},{"attributes":{"callback":null,"data":{"Confirmed":[118,149,217,262,402,518,583,959,1281,1663,2179,2727,3499,4632,6421,7783,13677,19100,25489],"Country":["US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US","US"],"Date":{"__ndarray__":"AAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[19]},"Date_dt_strings":["2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkA=","dtype":"float64","shape":[19]}},"selected":{"id":"35630","type":"Selection"},"selection_policy":{"id":"35691","type":"UnionRenderers"}},"id":"35629","type":"ColumnDataSource"},{"attributes":{"line_alpha":0.2,"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35665","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35457","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35473","type":"Line"},{"attributes":{"callback":null,"data":{"Country":["France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France"],"Date":{"__ndarray__":"AADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[22]},"Date_dt_strings":["2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[2,2,3,4,4,6,9,11,19,19,33,48,48,79,91,91,148,148,148,243,450,562],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUA=","dtype":"float64","shape":[22]}},"selected":{"id":"35938","type":"Selection"},"selection_policy":{"id":"35971","type":"UnionRenderers"}},"id":"35937","type":"ColumnDataSource"},{"attributes":{"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35924","type":"Line"},{"attributes":{"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35957","type":"Line"},{"attributes":{},"id":"35469","type":"Selection"},{"attributes":{},"id":"35502","type":"UnionRenderers"},{"attributes":{"line_alpha":0.1,"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35633","type":"Line"},{"attributes":{"source":{"id":"35954","type":"ColumnDataSource"}},"id":"35961","type":"CDSView"},{"attributes":{},"id":"35922","type":"Selection"},{"attributes":{},"id":"35486","type":"Selection"},{"attributes":{},"id":"35627","type":"UnionRenderers"},{"attributes":{},"id":"35440","type":"ResetTool"},{"attributes":{},"id":"35907","type":"WheelZoomTool"},{"attributes":{"callback":null,"end":74618.99999999985,"reset_end":74618.99999999985,"reset_start":100.0,"start":100.0,"tags":[[["Confirmed","Confirmed Cases",null]]]},"id":"35406","type":"Range1d"},{"attributes":{},"id":"36160","type":"UnionRenderers"},{"attributes":{"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35663","type":"Line"},{"attributes":{},"id":"36187","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"36129","type":"ColumnDataSource"},"glyph":{"id":"36132","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"36134","type":"Line"},"nonselection_glyph":{"id":"36133","type":"Line"},"selection_glyph":null,"view":{"id":"36136","type":"CDSView"}},"id":"36135","type":"GlyphRenderer"},{"attributes":{"label":{"value":"China"},"renderers":[{"id":"35458","type":"GlyphRenderer"}]},"id":"35467","type":"LegendItem"},{"attributes":{},"id":"35436","type":"SaveTool"},{"attributes":{"source":{"id":"35468","type":"ColumnDataSource"}},"id":"35475","type":"CDSView"},{"attributes":{"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35940","type":"Line"},{"attributes":{"data_source":{"id":"35468","type":"ColumnDataSource"},"glyph":{"id":"35471","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35473","type":"Line"},"nonselection_glyph":{"id":"35472","type":"Line"},"selection_glyph":null,"view":{"id":"35475","type":"CDSView"}},"id":"35474","type":"GlyphRenderer"},{"attributes":{"source":{"id":"36129","type":"ColumnDataSource"}},"id":"36136","type":"CDSView"},{"attributes":{"source":{"id":"35660","type":"ColumnDataSource"}},"id":"35667","type":"CDSView"},{"attributes":{"callback":null,"data":{"Country":["Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South","Korea, South"],"Date":{"__ndarray__":"AAAATv4Fd0IAAMCzUAZ3QgAAgBmjBndCAABAf/UGd0IAAADlRwd3QgAAwEqaB3dCAACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93Qg==","dtype":"float64","shape":[29]},"Date_dt_strings":["2020-02-20 00:00:00","2020-02-21 00:00:00","2020-02-22 00:00:00","2020-02-23 00:00:00","2020-02-24 00:00:00","2020-02-25 00:00:00","2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00"],"Deaths":[1,2,2,6,8,10,12,13,13,16,17,28,28,35,35,42,44,50,53,54,60,66,66,72,75,75,81,84,91],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEAAAAAAAAA5QAAAAAAAADpAAAAAAAAAO0AAAAAAAAA8QA==","dtype":"float64","shape":[29]}},"selected":{"id":"36018","type":"Selection"},"selection_policy":{"id":"36067","type":"UnionRenderers"}},"id":"36017","type":"ColumnDataSource"},{"attributes":{},"id":"36127","type":"UnionRenderers"},{"attributes":{"text":"","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"35418","type":"Title"},{"attributes":{"line_alpha":0.1,"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35958","type":"Line"},{"attributes":{},"id":"35505","type":"Selection"},{"attributes":{},"id":"35909","type":"ResetTool"},{"attributes":{"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35488","type":"Line"},{"attributes":{"callback":null,"data":{"Confirmed":[116,164,207,274,322,384,459,459,802,1144,1145,1551,1960,2642,2716,4014,5067],"Country":["United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom","United Kingdom"],"Date":{"__ndarray__":"AACA3n8Kd0IAAEBE0gp3QgAAAKokC3dCAADAD3cLd0IAAIB1yQt3QgAAQNsbDHdCAAAAQW4Md0IAAMCmwAx3QgAAgAwTDXdCAABAcmUNd0IAAADYtw13QgAAwD0KDndCAACAo1wOd0IAAEAJrw53QgAAAG8BD3dCAADA1FMPd0IAAIA6pg93Qg==","dtype":"float64","shape":[17]},"Date_dt_strings":["2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQA==","dtype":"float64","shape":[17]}},"selected":{"id":"35661","type":"Selection"},"selection_policy":{"id":"35718","type":"UnionRenderers"}},"id":"35660","type":"ColumnDataSource"},{"attributes":{"callback":null,"data":{"Confirmed":[1176,1457,1908,2078,3675,4585,5795,7272,9257,12327,15320,19848,22213],"Country":["Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany","Germany"],"Date":{"__ndarray__":"AACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[13]},"Date_dt_strings":["2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAIEAAAAAAAAAiQAAAAAAAACRAAAAAAAAAJkAAAAAAAAAoQAAAAAAAACpAAAAAAAAALEAAAAAAAAAuQAAAAAAAADBAAAAAAAAAMUAAAAAAAAAyQAAAAAAAADNAAAAAAAAANEA=","dtype":"float64","shape":[13]}},"selected":{"id":"35486","type":"Selection"},"selection_policy":{"id":"35523","type":"UnionRenderers"}},"id":"35485","type":"ColumnDataSource"},{"attributes":{"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36101","type":"Line"},{"attributes":{"callback":null,"data":{"Confirmed":[100,130,191,204,288,380,656,957,1134,1217,1792,2290,2290,3678,4487,4523,6668,7699,9105,10947,12726,14431],"Country":["France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France","France"],"Date":{"__ndarray__":"AADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[22]},"Date_dt_strings":["2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUA=","dtype":"float64","shape":[22]}},"selected":{"id":"35469","type":"Selection"},"selection_policy":{"id":"35502","type":"UnionRenderers"}},"id":"35468","type":"ColumnDataSource"},{"attributes":{"callback":null,"data":{"Confirmed":[114,214,268,337,374,491,652,652,1139,1359,2200,2200,2700,3028,4075,5294,6575],"Country":["Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland"],"Date":{"__ndarray__":"AACA3n8Kd0IAAEBE0gp3QgAAAKokC3dCAADAD3cLd0IAAIB1yQt3QgAAQNsbDHdCAAAAQW4Md0IAAMCmwAx3QgAAgAwTDXdCAABAcmUNd0IAAADYtw13QgAAwD0KDndCAACAo1wOd0IAAEAJrw53QgAAAG8BD3dCAADA1FMPd0IAAIA6pg93Qg==","dtype":"float64","shape":[17]},"Date_dt_strings":["2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQA==","dtype":"float64","shape":[17]}},"selected":{"id":"35601","type":"Selection"},"selection_policy":{"id":"35658","type":"UnionRenderers"}},"id":"35600","type":"ColumnDataSource"},{"attributes":{"data_source":{"id":"35660","type":"ColumnDataSource"},"glyph":{"id":"35663","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35665","type":"Line"},"nonselection_glyph":{"id":"35664","type":"Line"},"selection_glyph":null,"view":{"id":"35667","type":"CDSView"}},"id":"35666","type":"GlyphRenderer"},{"attributes":{"source":{"id":"35600","type":"ColumnDataSource"}},"id":"35607","type":"CDSView"},{"attributes":{"source":{"id":"35937","type":"ColumnDataSource"}},"id":"35944","type":"CDSView"},{"attributes":{},"id":"35574","type":"Selection"},{"attributes":{"line_alpha":0.1,"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36102","type":"Line"},{"attributes":{},"id":"35971","type":"UnionRenderers"},{"attributes":{"line_alpha":0.2,"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35942","type":"Line"},{"attributes":{"callback":null,"data":{"Country":["Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland","Switzerland"],"Date":{"__ndarray__":"AACA3n8Kd0IAAEBE0gp3QgAAAKokC3dCAADAD3cLd0IAAIB1yQt3QgAAQNsbDHdCAAAAQW4Md0IAAMCmwAx3QgAAgAwTDXdCAABAcmUNd0IAAADYtw13QgAAwD0KDndCAACAo1wOd0IAAEAJrw53QgAAAG8BD3dCAADA1FMPd0IAAIA6pg93Qg==","dtype":"float64","shape":[17]},"Date_dt_strings":["2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[1,1,1,2,2,3,4,4,11,13,14,14,27,28,41,54,75],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQA==","dtype":"float64","shape":[17]}},"selected":{"id":"36070","type":"Selection"},"selection_policy":{"id":"36127","type":"UnionRenderers"}},"id":"36069","type":"ColumnDataSource"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"35934","type":"BoxAnnotation"},{"attributes":{"line_alpha":0.2,"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35959","type":"Line"},{"attributes":{},"id":"35718","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"36098","type":"ColumnDataSource"},"glyph":{"id":"36101","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"36103","type":"Line"},"nonselection_glyph":{"id":"36102","type":"Line"},"selection_glyph":null,"view":{"id":"36105","type":"CDSView"}},"id":"36104","type":"GlyphRenderer"},{"attributes":{},"id":"35938","type":"Selection"},{"attributes":{"source":{"id":"35452","type":"ColumnDataSource"}},"id":"35459","type":"CDSView"},{"attributes":{"callback":null,"data":{"Country":["Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran","Iran"],"Date":{"__ndarray__":"AACAsOwHd0IAAEAWPwh3QgAAAHyRCHdCAADA4eMId0IAAIBHNgl3QgAAQK2ICXdCAAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[25]},"Date_dt_strings":["2020-02-26 00:00:00","2020-02-27 00:00:00","2020-02-28 00:00:00","2020-02-29 00:00:00","2020-03-01 00:00:00","2020-03-02 00:00:00","2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[19,26,34,43,54,66,77,92,107,124,145,194,237,291,354,429,514,611,724,853,988,1135,1284,1433,1556],"days_pat_100":{"__ndarray__":"AAAAAAAAAAAAAAAAAADwPwAAAAAAAABAAAAAAAAACEAAAAAAAAAQQAAAAAAAABRAAAAAAAAAGEAAAAAAAAAcQAAAAAAAACBAAAAAAAAAIkAAAAAAAAAkQAAAAAAAACZAAAAAAAAAKEAAAAAAAAAqQAAAAAAAACxAAAAAAAAALkAAAAAAAAAwQAAAAAAAADFAAAAAAAAAMkAAAAAAAAAzQAAAAAAAADRAAAAAAAAANUAAAAAAAAA2QAAAAAAAADdAAAAAAAAAOEA=","dtype":"float64","shape":[25]}},"selected":{"id":"35974","type":"Selection"},"selection_policy":{"id":"36015","type":"UnionRenderers"}},"id":"35973","type":"ColumnDataSource"},{"attributes":{"line_alpha":0.1,"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35456","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#fc4f30","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35941","type":"Line"},{"attributes":{"overlay":{"id":"35465","type":"BoxAnnotation"}},"id":"35439","type":"BoxZoomTool"},{"attributes":{"align":null,"below":[{"id":"35895","type":"LinearAxis"}],"center":[{"id":"35899","type":"Grid"},{"id":"35904","type":"Grid"},{"id":"35935","type":"Legend"}],"left":[{"id":"35900","type":"LogAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":480,"plot_width":640,"renderers":[{"id":"35927","type":"GlyphRenderer"},{"id":"35943","type":"GlyphRenderer"},{"id":"35960","type":"GlyphRenderer"},{"id":"35979","type":"GlyphRenderer"},{"id":"36000","type":"GlyphRenderer"},{"id":"36023","type":"GlyphRenderer"},{"id":"36048","type":"GlyphRenderer"},{"id":"36075","type":"GlyphRenderer"},{"id":"36104","type":"GlyphRenderer"},{"id":"36135","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"35887","type":"Title"},"toolbar":{"id":"35910","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"35405","type":"Range1d"},"x_scale":{"id":"35891","type":"LinearScale"},"y_range":{"id":"35875","type":"Range1d"},"y_scale":{"id":"35893","type":"LogScale"}},"id":"35886","subtype":"Figure","type":"Plot"},{"attributes":{"label":{"value":"Switzerland"},"renderers":[{"id":"35606","type":"GlyphRenderer"}]},"id":"35628","type":"LegendItem"},{"attributes":{"text":"","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"35887","type":"Title"},{"attributes":{"line_alpha":0.2,"line_color":"#1f77b4","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36103","type":"Line"},{"attributes":{},"id":"36130","type":"Selection"},{"attributes":{"label":{"value":"Germany"},"renderers":[{"id":"35491","type":"GlyphRenderer"}]},"id":"35503","type":"LegendItem"},{"attributes":{"label":{"value":"US"},"renderers":[{"id":"36104","type":"GlyphRenderer"}]},"id":"36128","type":"LegendItem"},{"attributes":{"source":{"id":"35921","type":"ColumnDataSource"}},"id":"35928","type":"CDSView"},{"attributes":{"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35455","type":"Line"},{"attributes":{"source":{"id":"36098","type":"ColumnDataSource"}},"id":"36105","type":"CDSView"},{"attributes":{"children":[[{"id":"35417","subtype":"Figure","type":"Plot"},0,0],[{"id":"35886","subtype":"Figure","type":"Plot"},1,0]]},"id":"36398","type":"GridBox"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"35876","type":"HoverTool"},{"id":"35905","type":"SaveTool"},{"id":"35906","type":"PanTool"},{"id":"35907","type":"WheelZoomTool"},{"id":"35908","type":"BoxZoomTool"},{"id":"35909","type":"ResetTool"}]},"id":"35910","type":"Toolbar"},{"attributes":{"tools":[{"id":"35407","type":"HoverTool"},{"id":"35436","type":"SaveTool"},{"id":"35437","type":"PanTool"},{"id":"35438","type":"WheelZoomTool"},{"id":"35439","type":"BoxZoomTool"},{"id":"35440","type":"ResetTool"},{"id":"35876","type":"HoverTool"},{"id":"35905","type":"SaveTool"},{"id":"35906","type":"PanTool"},{"id":"35907","type":"WheelZoomTool"},{"id":"35908","type":"BoxZoomTool"},{"id":"35909","type":"ResetTool"}]},"id":"36399","type":"ProxyToolbar"},{"attributes":{},"id":"35598","type":"UnionRenderers"},{"attributes":{"line_alpha":0.2,"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35490","type":"Line"},{"attributes":{"line_alpha":0.1,"line_color":"#30a2da","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"35925","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36134","type":"Line"},{"attributes":{"label":{"value":"Korea, South"},"renderers":[{"id":"36023","type":"GlyphRenderer"}]},"id":"36041","type":"LegendItem"},{"attributes":{"data_source":{"id":"35921","type":"ColumnDataSource"},"glyph":{"id":"35924","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"35926","type":"Line"},"nonselection_glyph":{"id":"35925","type":"Line"},"selection_glyph":null,"view":{"id":"35928","type":"CDSView"}},"id":"35927","type":"GlyphRenderer"},{"attributes":{},"id":"35691","type":"UnionRenderers"},{"attributes":{},"id":"35437","type":"PanTool"},{"attributes":{"line_alpha":0.1,"line_color":"#e5ae38","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Confirmed"}},"id":"35489","type":"Line"},{"attributes":{"callback":null,"data":{"Country":["Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain","Spain"],"Date":{"__ndarray__":"AAAAE9sJd0IAAMB4LQp3QgAAgN5/CndCAABARNIKd0IAAACqJAt3QgAAwA93C3dCAACAdckLd0IAAEDbGwx3QgAAAEFuDHdCAADApsAMd0IAAIAMEw13QgAAQHJlDXdCAAAA2LcNd0IAAMA9Cg53QgAAgKNcDndCAABACa8Od0IAAABvAQ93QgAAwNRTD3dCAACAOqYPd0I=","dtype":"float64","shape":[19]},"Date_dt_strings":["2020-03-03 00:00:00","2020-03-04 00:00:00","2020-03-05 00:00:00","2020-03-06 00:00:00","2020-03-07 00:00:00","2020-03-08 00:00:00","2020-03-09 00:00:00","2020-03-10 00:00:00","2020-03-11 00:00:00","2020-03-12 00:00:00","2020-03-13 00:00:00","2020-03-14 00:00:00","2020-03-15 00:00:00","2020-03-16 00:00:00","2020-03-17 00:00:00","2020-03-18 00:00:00","2020-03-19 00:00:00","2020-03-20 00:00:00","2020-03-21 00:00:00"],"Deaths":[1,2,3,5,10,17,28,35,54,55,133,195,289,342,533,623,830,1043,1375],"days_pat_100":{"__ndarray__":"AAAAAAAA8D8AAAAAAAAAQAAAAAAAAAhAAAAAAAAAEEAAAAAAAAAUQAAAAAAAABhAAAAAAAAAHEAAAAAAAAAgQAAAAAAAACJAAAAAAAAAJEAAAAAAAAAmQAAAAAAAAChAAAAAAAAAKkAAAAAAAAAsQAAAAAAAAC5AAAAAAAAAMEAAAAAAAAAxQAAAAAAAADJAAAAAAAAAM0A=","dtype":"float64","shape":[19]}},"selected":{"id":"36043","type":"Selection"},"selection_policy":{"id":"36096","type":"UnionRenderers"}},"id":"36042","type":"ColumnDataSource"},{"attributes":{},"id":"35955","type":"Selection"},{"attributes":{"line_color":"#e377c2","line_width":2,"x":{"field":"days_pat_100"},"y":{"field":"Deaths"}},"id":"36132","type":"Line"},{"attributes":{"source":{"id":"35485","type":"ColumnDataSource"}},"id":"35492","type":"CDSView"},{"attributes":{"callback":null,"formatters":{"Date":"datetime"},"renderers":[{"id":"35927","type":"GlyphRenderer"},{"id":"35943","type":"GlyphRenderer"},{"id":"35960","type":"GlyphRenderer"},{"id":"35979","type":"GlyphRenderer"},{"id":"36000","type":"GlyphRenderer"},{"id":"36023","type":"GlyphRenderer"},{"id":"36048","type":"GlyphRenderer"},{"id":"36075","type":"GlyphRenderer"},{"id":"36104","type":"GlyphRenderer"},{"id":"36135","type":"GlyphRenderer"}],"tooltips":[["","@Country"],["Deaths","@Deaths"],["Days","@days_pat_100"],["Date","@Date{%F}"]]},"id":"35876","type":"HoverTool"}],"root_ids":["36401"]},"title":"Bokeh Application","version":"1.4.0"}};
+  var render_items = [{"docid":"7aa52f20-02f5-497d-92dc-99ecf0bea04b","roots":{"36401":"102f6cec-6cca-4883-bc91-a7bdc6437eec"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        clearInterval(timer);
+        embed_document(root);
+      } else {
+        attempts++;
+        if (attempts > 100) {
+          clearInterval(timer);
+          console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        }
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
