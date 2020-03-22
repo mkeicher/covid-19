@@ -1,5 +1,3 @@
-{% include hv_overview.html %}
-
 <iframe src="_includes/hv_overview.html"
     sandbox="allow-same-origin allow-scripts"
     width="100%"
