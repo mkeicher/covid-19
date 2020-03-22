@@ -1,2 +1,2 @@
-# covid-19
-Explorative data analysis of confirmed Coronavirus SARS-CoV-2 cases and deaths
+# COVID-19 EDA
+Explorative data analysis of the current Coronavirus SARS-CoV-2 outbreak
