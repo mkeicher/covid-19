@@ -1,4 +1,6 @@
-<iframe src="/_includes/hv_overview.html"
+{% include hv_overview.html %}
+
+<iframe src="_includes/hv_overview.html"
     sandbox="allow-same-origin allow-scripts"
     width="100%"
     height="500"
@@ -6,7 +8,7 @@
     seamless="seamless"
     frameborder="0">
 </iframe>
-<iframe src="/_includes/hv_cases.html"
+<iframe src="hv_cases.html"
     sandbox="allow-same-origin allow-scripts"
     width="100%"
     height="500"
@@ -22,3 +24,5 @@
     seamless="seamless"
     frameborder="0">
 </iframe>
+
+test
