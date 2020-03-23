@@ -1,1 +1,1 @@
-{% include assets/test.html %}
+{% include test.html %}
