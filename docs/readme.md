@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <script type="text/javascript">
     /* BEGIN panel.min.js */
         /*!
@@ -85,6 +86,32 @@
         })
 
         //# sourceMappingURL=panel.min.js.map
+=======
+<iframe src="_includes/hv_overview.html"
+    sandbox="allow-same-origin allow-scripts"
+    width="100%"
+    height="500"
+    scrolling="no"
+    seamless="seamless"
+    frameborder="0">
+</iframe>
+<iframe src="hv_cases.html"
+    sandbox="allow-same-origin allow-scripts"
+    width="100%"
+    height="500"
+    scrolling="no"
+    seamless="seamless"
+    frameborder="0">
+</iframe>
+<iframe src="/_includes/hv_log.html"
+    sandbox="allow-same-origin allow-scripts"
+    width="100%"
+    height="500"
+    scrolling="no"
+    seamless="seamless"
+    frameborder="0">
+</iframe>
+>>>>>>> 5f3f2b570e46bbbbca4c7a9e4a86560a170562f3
 
         /* END panel.min.js */
 </script>
