@@ -1,8 +1,7 @@
 # COVID-19 EDA
 Explorative data analysis of the current Coronavirus SARS-CoV-2 outbreak
 
-based on data provided by the Johns Hopkins University:
-
+based on data provided by the Johns Hopkins University: 
 https://github.com/CSSEGISandData/COVID-19
 
 inspired by:
